@@ -39,3 +39,22 @@ export async function patchDayDone(planId: string, dayNumber: number, isDone: bo
   return await res.json();
 }
 
+
+export async function patchDayContent(
+  planId: string,
+  dayNumber: number,
+  payload: { focus?: string; steps?: any[] }
+) {
+  const res = await fetch(`${API_BASE}/plans/${planId}/days/${dayNumber}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "update failed");
+  }
+
+  return res.json();
+}

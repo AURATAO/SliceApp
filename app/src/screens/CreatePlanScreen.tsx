@@ -7,6 +7,7 @@ import { Screen } from "../ui/Screen";
 import { CollageCard } from "../ui/CollageCard";
 import { BrutalButton } from "../ui/BrutalButton";
 import { Marks } from "../ui/Marks";
+import { useSliceHeader } from "../ui/useSliceHeader";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Create">;
 
@@ -15,6 +16,7 @@ export default function CreatePlanScreen({ navigation }: Props) {
   const [days, setDays] = useState("7");
   const [minutes, setMinutes] = useState("30");
   const [loading, setLoading] = useState(false);
+  useSliceHeader(navigation, { left: "none", right: "plans" });
 
   const onCreate = async () => {
     const d = Number(days);

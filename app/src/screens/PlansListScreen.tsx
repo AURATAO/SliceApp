@@ -15,6 +15,7 @@ import { Screen } from "../ui/Screen";
 import { CollageCard } from "../ui/CollageCard";
 import { VerticalLabel } from "../ui/VerticalLabel";
 import { Marks } from "../ui/Marks";
+import { useSliceHeader } from "../ui/useSliceHeader";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Plans">;
 
@@ -24,6 +25,7 @@ export default function PlansListScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [plans, setPlans] = useState<PlanListItem[]>([]);
   const [err, setErr] = useState<string>("");
+  useSliceHeader(navigation, { left: "none", right: "plus" });
 
   const load = async () => {
     try {
@@ -37,19 +39,6 @@ export default function PlansListScreen({ navigation }: Props) {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    navigation.setOptions({
-      title: "Slice",
-      headerRight: () => (
-        <Pressable onPress={() => navigation.navigate("Create")}>
-          <View className="border-2 border-charcoal rounded-[10px] px-3 py-1 bg-mustard">
-            <Text className="text-charcoal font-bold text-[16px]">＋</Text>
-          </View>
-        </Pressable>
-      ),
-    });
-  }, [navigation]);
 
   useFocusEffect(
     useCallback(() => {

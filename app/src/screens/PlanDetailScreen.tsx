@@ -16,6 +16,7 @@ import { Screen } from "../ui/Screen";
 import { CollageCard } from "../ui/CollageCard";
 import { Marks } from "../ui/Marks";
 import { VerticalLabel } from "../ui/VerticalLabel";
+import { useSliceHeader } from "../ui/useSliceHeader";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Detail">;
 
@@ -25,6 +26,7 @@ export default function PlanDetailScreen({ route, navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [plan, setPlan] = useState<PlanDetail | null>(null);
   const [err, setErr] = useState("");
+  useSliceHeader(navigation, { left: "none", right: "plans" });
 
   const load = async () => {
     try {
