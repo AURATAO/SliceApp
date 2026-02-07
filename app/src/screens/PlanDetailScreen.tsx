@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, useMemo } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,19 +14,23 @@ import type { PlanDay, PlanDetail } from "../types";
 import type { RootStackParamList } from "../../App";
 import { Screen } from "../ui/Screen";
 import { CollageCard } from "../ui/CollageCard";
-import { Marks } from "../ui/Marks";
-import { VerticalLabel } from "../ui/VerticalLabel";
 import { useSliceHeader } from "../ui/useSliceHeader";
+import { EditablePlanDayCard } from "../ui/EditablePlanDayCard";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Detail">;
 
 export default function PlanDetailScreen({ route, navigation }: Props) {
   const { id } = route.params;
-
+  const [openSlice, setOpenSlice] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [plan, setPlan] = useState<PlanDetail | null>(null);
   const [err, setErr] = useState("");
   useSliceHeader(navigation, { left: "none", right: "plans" });
+  const todaySliceNumber = useMemo(() => {
+    const items = plan?.items ?? [];
+    const next = items.find((d: any) => !d.is_done);
+    return next ? next.day_number : null;
+  }, [plan?.items]);
 
   const load = async () => {
     try {
@@ -85,7 +89,6 @@ export default function PlanDetailScreen({ route, navigation }: Props) {
   return (
     <Screen>
       <View className="relative mb-3">
-        <Marks />
         <Text className="text-charcoal text-[24px] font-bold tracking-[1px]">
           {plan.title}
         </Text>
@@ -100,43 +103,165 @@ export default function PlanDetailScreen({ route, navigation }: Props) {
         ItemSeparatorComponent={() => <View className="h-3" />}
         renderItem={({ item }) => (
           <View className="relative">
-            <VerticalLabel text="CHECKLIST" />
-            <Pressable onPress={() => toggleDay(item)}>
-              <CollageCard tone={item.is_done ? "paper" : "teal"}>
-                <View className="flex-row justify-between items-center">
-                  <Text className="text-charcoal text-[16px] font-bold tracking-[1px]">
-                    DAY {item.day_number}
-                  </Text>
-
-                  <View
-                    className={`border-2 border-charcoal rounded-[999px] px-3 py-1 ${item.is_done ? "bg-mustard" : "bg-paper"}`}
-                  >
-                    <Text className="text-charcoal font-bold tracking-[2px] text-[12px]">
-                      {item.is_done ? "DONE" : "OPEN"}
-                    </Text>
-                  </View>
-                </View>
-
-                <Text className="text-charcoal mt-2 font-bold">
-                  {item.focus}
-                </Text>
-
-                <View className="mt-3 border-t-2 border-charcoal pt-2">
-                  {item.steps.map((s, idx) => (
-                    <Text key={idx} className="text-charcoal opacity-90">
-                      • {s.title} ({s.minutes}m)
-                    </Text>
-                  ))}
-                </View>
-
-                <Text className="mt-2 text-charcoal opacity-60 text-[12px] tracking-[2px] font-bold">
-                  TAP TO TOGGLE →
-                </Text>
-              </CollageCard>
-            </Pressable>
+            <SliceSummaryCard
+              item={item}
+              isToday={todaySliceNumber === item.day_number}
+              onToggleDone={() => toggleDay(item)}
+              onEdit={() =>
+                navigation.navigate("DayEditor", {
+                  planId: plan.id,
+                  dayNumber: item.day_number,
+                })
+              }
+            />
           </View>
         )}
       />
     </Screen>
+  );
+}
+
+function SliceSummaryCard({
+  item,
+  isToday,
+  onToggleDone,
+  onEdit,
+}: {
+  item: any;
+  isToday: boolean;
+  onToggleDone: () => void;
+  onEdit: () => void;
+}) {
+  const [openSteps, setOpenSteps] = useState(false);
+  const [openDoneIdx, setOpenDoneIdx] = useState<number | null>(null);
+
+  const totalMin = (item.steps ?? []).reduce(
+    (a: number, s: any) => a + (s.minutes || 0),
+    0,
+  );
+
+  const tone = isToday ? "mustard" : item.is_done ? "paper" : "teal";
+
+  return (
+    <View className="relative">
+      <CollageCard tone={tone}>
+        {/* Header */}
+        <View className="flex-row items-center justify-between">
+          <View className="flex-row items-center gap-3">
+            <Text className="text-charcoal text-[16px] font-bold tracking-[2px]">
+              SLICE {item.day_number}
+            </Text>
+
+            <View className="border-2 border-charcoal rounded-[999px] px-3 py-1 bg-paper">
+              <Text className="text-charcoal font-bold tracking-[2px] text-[12px]">
+                {totalMin} MIN
+              </Text>
+            </View>
+
+            {isToday ? (
+              <View className="border-2 border-charcoal rounded-[999px] px-3 py-1 bg-rust">
+                <Text className="text-charcoal font-bold tracking-[2px] text-[12px]">
+                  TODAY
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Status pill: TODO / DONE */}
+          <Pressable onPress={onToggleDone} hitSlop={10}>
+            <View
+              className={`border-2 border-charcoal rounded-[999px] px-3 py-1 ${
+                item.is_done ? "bg-mustard" : "bg-paper"
+              }`}
+            >
+              <Text className="text-charcoal font-bold tracking-[2px] text-[12px]">
+                {item.is_done ? "DONE" : "TODO"}
+              </Text>
+            </View>
+          </Pressable>
+        </View>
+
+        {/* OPS toggle */}
+        <View className="mt-3">
+          <Pressable
+            onPress={() => {
+              const next = !openSteps;
+              setOpenSteps(next);
+              if (!next) setOpenDoneIdx(null);
+            }}
+            hitSlop={10}
+          >
+            <View className="flex-row items-center justify-between border-t-2 border-charcoal pt-3">
+              <Text className="text-charcoal font-bold tracking-[3px] text-[12px] opacity-80">
+                OPS
+              </Text>
+              <Text className="text-charcoal font-bold text-[14px]">
+                {openSteps ? "▴" : "▾"}
+              </Text>
+            </View>
+          </Pressable>
+
+          {openSteps ? (
+            <View className="mt-2 gap-2">
+              {(item.steps ?? []).map((s: any, idx: number) => {
+                const isOpen = openDoneIdx === idx;
+                const hasDone =
+                  s.done_definition &&
+                  String(s.done_definition).trim().length > 0;
+
+                return (
+                  <Pressable
+                    key={idx}
+                    onPress={() => {
+                      if (!hasDone) return;
+                      setOpenDoneIdx(isOpen ? null : idx);
+                    }}
+                    hitSlop={10}
+                  >
+                    <View className="border-2 border-charcoal rounded-[12px] bg-paper px-3 py-2">
+                      <View className="flex-row items-start justify-between">
+                        <Text className="text-charcoal font-bold flex-1 pr-3">
+                          {idx + 1}. {s.title}
+                        </Text>
+                        <Text className="text-charcoal opacity-70 font-bold">
+                          {s.minutes}m
+                        </Text>
+                      </View>
+
+                      {/* Done means accordion (tap the step) */}
+                      {isOpen ? (
+                        <View className="mt-2 border-t-2 border-charcoal pt-2">
+                          <Text className="text-charcoal opacity-70 text-[12px] tracking-[2px] font-bold">
+                            DONE MEANS
+                          </Text>
+                          <Text className="text-charcoal mt-1">
+                            {s.done_definition}
+                          </Text>
+                        </View>
+                      ) : null}
+
+                      {!hasDone ? (
+                        <Text className="text-charcoal opacity-50 mt-1 text-[12px]">
+                          (No done definition)
+                        </Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                );
+              })}
+
+              {/* ✅ EDIT SLICE button */}
+              <Pressable onPress={onEdit} hitSlop={10}>
+                <View className="mt-1 border-2 border-charcoal rounded-[12px] bg-charcoal px-4 py-3">
+                  <Text className="text-paper font-bold tracking-[2px] text-[12px]">
+                    EDIT SLICE →
+                  </Text>
+                </View>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      </CollageCard>
+    </View>
   );
 }

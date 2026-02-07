@@ -20,6 +20,7 @@ func NewRouter(db *pgxpool.Pool) http.Handler {
 	r.Post("/plan", handleCreatePlan(db))
 	r.Patch("/plans/{id}/days/{day}", handlePatchPlanDay(db))
 	r.Patch("/plans/{id}/days/{dayNumber}", handleUpdatePlanDay(db))
+	r.Delete("/plans/{id}", handleDeletePlan(db))
 
 	return r
 }

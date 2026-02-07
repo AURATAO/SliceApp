@@ -58,3 +58,14 @@ export async function patchDayContent(
 
   return res.json();
 }
+
+export async function deletePlan(planId: string) {
+  const res = await fetch(`${API_BASE}/plans/${planId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "delete failed");
+  }
+  return true;
+}
