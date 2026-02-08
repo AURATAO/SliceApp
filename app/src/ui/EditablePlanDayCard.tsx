@@ -8,6 +8,7 @@ type Tone = "paper" | "teal" | "mustard" | "rust";
 type PlanDayStep = {
   title: string;
   minutes: number;
+  deliverable?: string;
   done_definition?: string;
 };
 
@@ -162,8 +163,19 @@ export function EditablePlanDayCard({
                 </View>
 
                 {isOpen ? (
-                  <View className="mt-3 border-t-2 border-charcoal pt-2">
-                    <Text className="text-charcoal opacity-70 text-[12px] tracking-[2px] font-bold">
+                  <View className="mt-2 border-t-2 border-charcoal pt-2">
+                    {s.deliverable ? (
+                      <>
+                        <Text className="text-charcoal opacity-70 text-[12px] tracking-[2px] font-bold">
+                          DELIVERABLE
+                        </Text>
+                        <Text className="text-charcoal mt-1">
+                          {s.deliverable}
+                        </Text>
+                      </>
+                    ) : null}
+
+                    <Text className="text-charcoal opacity-70 text-[12px] tracking-[2px] font-bold mt-2">
                       DONE MEANS
                     </Text>
                     <Text className="text-charcoal mt-1">
@@ -234,6 +246,22 @@ export function EditablePlanDayCard({
 
                 {isOpen ? (
                   <View className="mt-3 border-t-2 border-charcoal pt-2">
+                    <Text className="text-charcoal opacity-70 mt-3">
+                      Deliverable…
+                    </Text>
+                    <TextInput
+                      value={s.deliverable ?? ""}
+                      onChangeText={(t) => {
+                        const next = [...draftSteps];
+                        next[idx] = { ...next[idx], deliverable: t };
+                        setDraftSteps(next);
+                      }}
+                      placeholder="What will exist after this step?"
+                      placeholderTextColor="#2C2C2C"
+                      className="mt-2 border-2 border-charcoal rounded-[12px] px-3 py-2 bg-paper text-charcoal"
+                      multiline
+                    />
+
                     <Text className="text-charcoal opacity-70 text-[12px] tracking-[2px] font-bold">
                       DONE MEANS
                     </Text>
@@ -259,7 +287,12 @@ export function EditablePlanDayCard({
             onPress={() =>
               setDraftSteps([
                 ...draftSteps,
-                { title: "New step", minutes: 10, done_definition: "" },
+                {
+                  title: "New step",
+                  minutes: 10,
+                  deliverable: "",
+                  done_definition: "",
+                },
               ])
             }
             hitSlop={10}

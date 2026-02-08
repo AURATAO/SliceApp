@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,6 +14,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func clampInt(v, minV, maxV int) int {
+	if v < minV {
+		return minV
+	}
+	if v > maxV {
+		return maxV
+	}
+	return v
+}
+
 type CreatePlanRequest struct {
 	Title        string `json:"title"`
 	Days         int    `json:"days"`
@@ -21,9 +32,10 @@ type CreatePlanRequest struct {
 }
 
 type PlanDayStep struct {
-	Title   string `json:"title"`
-	Minutes int    `json:"minutes"`
-	DoneDef string `json:"done_definition"`
+	Title       string `json:"title"`
+	Minutes     int    `json:"minutes"`
+	Deliverable string `json:"deliverable"`
+	DoneDef     string `json:"done_definition"`
 }
 
 type PlanDay struct {
@@ -54,45 +66,140 @@ func handleCreatePlan(db *pgxpool.Pool) http.HandlerFunc {
 
 		cfg := config.Load()
 
-		// ---- 1) 產生 items：依 USE_FAKE_AI 決定走假資料 or 走 OpenAI ----
-		var items []PlanDay
+		// Product rule: only plan next 7 days max (matches your AI rules)
+		planDays := req.Days
+		if planDays > 7 {
+			planDays = 7
+		}
+
+		// ---- 1) Produce meta + plan items (fake or real) ----
+		type metaPayload struct {
+			SplitterQuote     string   `json:"splitter_quote"`
+			Mode              string   `json:"mode"`
+			GoalType          string   `json:"goal_type"`
+			OriginalGoal      string   `json:"original_goal"`
+			FinalGoal         string   `json:"final_goal"`
+			Changed           bool     `json:"changed"`
+			WhyThisAdjustment string   `json:"why_this_adjustment"`
+			SuccessRule       string   `json:"success_rule"`
+			Assumptions       []string `json:"assumptions"`
+			RiskNotes         []string `json:"risk_notes"`
+		}
+
+		type planPayload struct {
+			ID           string    `json:"id"`
+			Title        string    `json:"title"`
+			Days         int       `json:"days"`
+			DailyMinutes int       `json:"daily_minutes"`
+			CreatedAt    time.Time `json:"created_at,omitempty"`
+			Items        []PlanDay `json:"items"`
+		}
+
+		var meta metaPayload
+		var plan planPayload
 
 		if cfg.UseFakeAI {
-			// ✅ 假資料（不花錢）
-			items = make([]PlanDay, 0, req.Days)
-			for i := 1; i <= req.Days; i++ {
+			// ✅ Fake splitter output (no cost)
+			meta = metaPayload{
+				SplitterQuote:     "Small wins compound faster than perfect plans.",
+				Mode:              "normal",
+				GoalType:          "Build",
+				OriginalGoal:      req.Title,
+				FinalGoal:         req.Title,
+				Changed:           false,
+				WhyThisAdjustment: "",
+				SuccessRule:       "Do 1 = pass. Do 2 = bonus. Do 3 = hero.",
+				Assumptions:       []string{},
+				RiskNotes:         []string{"If time gets tight, only do [BAD DAY] to keep the streak alive."},
+			}
+
+			// minutes allocation (match your AI rule idea)
+			D := req.DailyMinutes
+			bad := clampInt(int(math.Round(float64(D)*0.15)), 3, 10)
+			mom := clampInt(int(math.Round(float64(D)*0.25)), 10, 25)
+			core := D - bad - mom
+			if core < 10 {
+				need := 10 - core
+				mom -= need
+				if mom < 10 {
+					mom = 10
+				}
+				core = D - bad - mom
+			}
+
+			items := make([]PlanDay, 0, planDays)
+			for i := 1; i <= planDays; i++ {
 				items = append(items, PlanDay{
 					DayNumber: i,
-					Focus:     "Focus for day " + strconv.Itoa(i),
+					Focus:     "",
 					Steps: []PlanDayStep{
-						{Title: "Define today's micro-goal", Minutes: 5, DoneDef: "Written down in one sentence"},
-						{Title: "Do the main task", Minutes: max(1, req.DailyMinutes-10), DoneDef: "Produced a tangible output"},
-						{Title: "Quick review & prep tomorrow", Minutes: 5, DoneDef: "Next step decided"},
+						{
+							Title:       "[CORE] Ship one meaningful chunk",
+							Minutes:     core,
+							Deliverable: "1 tangible output (commit / doc / file) for Day " + strconv.Itoa(i),
+							DoneDef:     "You can point to it and say 'this exists now'.",
+						},
+						{
+							Title:       "[MOMENTUM] Prep the next move",
+							Minutes:     mom,
+							Deliverable: "A short note: next step + blockers",
+							DoneDef:     "A note exists with 1 next step and 1 blocker.",
+						},
+						{
+							Title:       "[BAD DAY] Keep the streak alive",
+							Minutes:     bad,
+							Deliverable: "A 1-line progress log",
+							DoneDef:     "One line written: what you touched today.",
+						},
 					},
 				})
 			}
+
+			plan = planPayload{
+				Title:        req.Title,
+				Days:         planDays,
+				DailyMinutes: req.DailyMinutes,
+				Items:        items,
+			}
 		} else {
-			// ✅ 真 AI（會花錢）
+			// ✅ Real AI (costs money)
 			aiClient := ai.NewClient(cfg.OpenAIKey, cfg.OpenAIModel)
 
 			ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
 			defer cancel()
 
-			daysFromAI, err := aiClient.GeneratePlan(ctx, req.Title, req.Days, req.DailyMinutes)
+			tf := planDays
+			dm := req.DailyMinutes
+			out, err := aiClient.GenerateSplitter(ctx, req.Title, &tf, &dm)
 			if err != nil {
 				http.Error(w, "ai generation failed: "+err.Error(), http.StatusBadGateway)
 				return
 			}
 
-			// 把 AI 結果轉回你原本的 PlanDay / Step 結構
-			items = make([]PlanDay, 0, len(daysFromAI))
-			for _, d := range daysFromAI {
+			// Map meta
+			meta = metaPayload{
+				SplitterQuote:     out.Meta.SplitterQuote,
+				Mode:              out.Meta.Mode,
+				GoalType:          out.Meta.GoalType,
+				OriginalGoal:      out.Meta.OriginalGoal,
+				FinalGoal:         out.Meta.FinalGoal,
+				Changed:           out.Meta.Changed,
+				WhyThisAdjustment: out.Meta.WhyThisAdjustment,
+				SuccessRule:       out.Meta.SuccessRule,
+				Assumptions:       out.Meta.Assumptions,
+				RiskNotes:         out.Meta.RiskNotes,
+			}
+
+			// Map plan (note: use AI final title)
+			items := make([]PlanDay, 0, len(out.Plan.Items))
+			for _, d := range out.Plan.Items {
 				steps := make([]PlanDayStep, 0, len(d.Steps))
 				for _, s := range d.Steps {
 					steps = append(steps, PlanDayStep{
-						Title:   s.Title,
-						Minutes: s.Minutes,
-						DoneDef: s.DoneDefinition,
+						Title:       s.Title,
+						Minutes:     s.Minutes,
+						Deliverable: s.Deliverable,
+						DoneDef:     s.DoneDefinition,
 					})
 				}
 				items = append(items, PlanDay{
@@ -101,22 +208,31 @@ func handleCreatePlan(db *pgxpool.Pool) http.HandlerFunc {
 					Steps:     steps,
 				})
 			}
+
+			plan = planPayload{
+				Title:        out.Plan.Title,
+				Days:         out.Plan.Days,
+				DailyMinutes: out.Plan.DailyMinutes,
+				Items:        items,
+			}
 		}
 
-		// DB 寫入（如果沒連上 DB，仍可回資料）
+		// ---- 2) DB write (if db connected) ----
 		planID := ""
+		createdAt := time.Time{}
+
 		if db != nil {
-			ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			defer cancel()
 
-			// user_id 先留空（之後串 Supabase Auth 再補）
+			// IMPORTANT: store final title (plan.Title), not req.Title
 			err := db.QueryRow(ctx,
-				`insert into public.plans (title, days, daily_minutes) values ($1,$2,$3) returning id`,
-				req.Title, req.Days, req.DailyMinutes,
-			).Scan(&planID)
+				`insert into public.plans (title, days, daily_minutes) values ($1,$2,$3) returning id, created_at`,
+				plan.Title, plan.Days, plan.DailyMinutes,
+			).Scan(&planID, &createdAt)
+
 			if err == nil {
-				// insert plan_days
-				for _, d := range items {
+				for _, d := range plan.Items {
 					stepsJSON, _ := json.Marshal(d.Steps)
 					_, _ = db.Exec(ctx,
 						`insert into public.plan_days (plan_id, day_number, focus, steps) values ($1,$2,$3,$4)`,
@@ -126,14 +242,18 @@ func handleCreatePlan(db *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		resp := CreatePlanResponse{
-			PlanID: planID,
-			Title:  req.Title,
-			Days:   req.Days,
-			Items:  items,
+		plan.ID = planID
+		if !createdAt.IsZero() {
+			plan.CreatedAt = createdAt
+		}
+
+		// ---- 3) Response: meta + plan (frontend can show modal immediately) ----
+		resp := map[string]any{
+			"meta": meta,
+			"plan": plan,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }

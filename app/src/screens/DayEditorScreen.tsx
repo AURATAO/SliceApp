@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { Text, View } from "react-native";
 import { Screen } from "../ui/Screen";
-import { Marks } from "../ui/Marks";
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { StateCard } from "../ui/StateCard";
 import { EditablePlanDayCard } from "../ui/EditablePlanDayCard";
 import { getPlan } from "../api";
@@ -78,19 +78,27 @@ export default function DayEditorScreen({ route, navigation }: any) {
 
   return (
     <Screen>
-      <View className="relative mb-3">
-        <Marks />
-        <Text className="text-charcoal text-[24px] font-bold tracking-[2px]">
-          EDIT SLICE {day.day_number}
-        </Text>
-      </View>
+      <KeyboardAwareScrollView
+        enableOnAndroid
+        keyboardShouldPersistTaps="handled"
+        extraScrollHeight={16}
+        contentContainerStyle={{ paddingBottom: 160 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <View className="relative mb-3">
+          <Text className="text-charcoal text-[24px] font-bold tracking-[2px]">
+            EDIT SLICE {day.day_number}
+          </Text>
+        </View>
 
-      <EditablePlanDayCard
-        planId={plan.id}
-        day={day}
-        tone="teal"
-        onSaved={load}
-      />
+        <EditablePlanDayCard
+          planId={plan.id}
+          day={day}
+          tone="teal"
+          onSaved={load}
+        />
+        <View style={{ height: 40 }} />
+      </KeyboardAwareScrollView>
     </Screen>
   );
 }

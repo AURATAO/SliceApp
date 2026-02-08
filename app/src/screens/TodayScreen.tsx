@@ -349,7 +349,18 @@ export default function TodayScreen({ navigation }: Props) {
 
                           {isOpen ? (
                             <View className="mt-2 border-t-2 border-charcoal pt-2">
-                              <Text className="text-charcoal opacity-70 text-[12px] tracking-[2px] font-bold">
+                              {s.deliverable ? (
+                                <>
+                                  <Text className="text-charcoal opacity-70 text-[12px] tracking-[2px] font-bold">
+                                    DELIVERABLE
+                                  </Text>
+                                  <Text className="text-charcoal mt-1">
+                                    {s.deliverable}
+                                  </Text>
+                                </>
+                              ) : null}
+
+                              <Text className="text-charcoal opacity-70 text-[12px] tracking-[2px] font-bold mt-2">
                                 DONE MEANS
                               </Text>
                               <Text className="text-charcoal mt-1">

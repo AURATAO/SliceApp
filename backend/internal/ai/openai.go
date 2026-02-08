@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -25,9 +27,12 @@ func NewClient(apiKey, model string) *Client {
 	}
 }
 
+// -------------------- Domain Types (align with app plan_days JSON) --------------------
+
 type PlanDayStep struct {
 	Title          string `json:"title"`
 	Minutes        int    `json:"minutes"`
+	Deliverable    string `json:"deliverable"`
 	DoneDefinition string `json:"done_definition"`
 }
 
@@ -37,11 +42,33 @@ type PlanDay struct {
 	Steps     []PlanDayStep `json:"steps"`
 }
 
-type planSchemaResponse struct {
-	Days []PlanDay `json:"days"`
+// meta + plan output (AI structured output)
+type SplitterMeta struct {
+	SplitterQuote     string   `json:"splitter_quote"`
+	Mode              string   `json:"mode"`      // normal | de_scope
+	GoalType          string   `json:"goal_type"` // Learn|Build|Create|Improve|Organize|Social
+	OriginalGoal      string   `json:"original_goal"`
+	FinalGoal         string   `json:"final_goal"`
+	Changed           bool     `json:"changed"`
+	WhyThisAdjustment string   `json:"why_this_adjustment"`
+	SuccessRule       string   `json:"success_rule"`
+	Assumptions       []string `json:"assumptions"`
+	RiskNotes         []string `json:"risk_notes"`
 }
 
-// ---- OpenAI Responses API payload ----
+type SplitterPlan struct {
+	Title        string    `json:"title"`
+	Days         int       `json:"days"`
+	DailyMinutes int       `json:"daily_minutes"`
+	Items        []PlanDay `json:"items"`
+}
+
+type SplitterResponse struct {
+	Meta SplitterMeta `json:"meta"`
+	Plan SplitterPlan `json:"plan"`
+}
+
+// -------------------- OpenAI Responses API payload --------------------
 
 type responsesReq struct {
 	Model        string     `json:"model"`
@@ -57,7 +84,7 @@ type textConfig struct {
 
 type jsonSchemaFormat struct {
 	Type   string         `json:"type"`   // "json_schema"
-	Name   string         `json:"name"`   // e.g. "slice_plan"
+	Name   string         `json:"name"`   // e.g. "slice_splitter"
 	Strict bool           `json:"strict"` // true
 	Schema map[string]any `json:"schema"`
 }
@@ -74,109 +101,35 @@ type responsesResp struct {
 	Error any `json:"error"`
 }
 
-func (c *Client) GeneratePlan(ctx context.Context, title string, days int, dailyMinutes int) ([]PlanDay, error) {
-	if c.APIKey == "" {
-		return nil, errors.New("OPENAI_API_KEY is empty")
-	}
-	if c.Model == "" {
-		c.Model = "gpt-5.2"
-	}
+// -------------------- Internal helpers --------------------
 
-	// JSON schema for Structured Outputs (Responses API "text.format")
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"days": map[string]any{
-				"type":     "array",
-				"minItems": days,
-				"maxItems": days,
-				"items": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"day_number": map[string]any{"type": "integer"},
-						"focus":      map[string]any{"type": "string"},
-						"steps": map[string]any{
-							"type":     "array",
-							"minItems": 1,
-							"maxItems": 5,
-							"items": map[string]any{
-								"type": "object",
-								"properties": map[string]any{
-									"title":           map[string]any{"type": "string"},
-									"minutes":         map[string]any{"type": "integer"},
-									"done_definition": map[string]any{"type": "string"},
-								},
-								"required":             []string{"title", "minutes", "done_definition"},
-								"additionalProperties": false,
-							},
-						},
-					},
-					"required":             []string{"day_number", "focus", "steps"},
-					"additionalProperties": false,
-				},
-			},
-		},
-		"required":             []string{"days"},
-		"additionalProperties": false,
-	}
-
-	instructions := `You are Slice, a task breakdown planner.
-Return ONLY JSON that matches the provided JSON Schema.
-
-Rules:
-- Produce exactly N days (1..N).
-- Each day has 1–5 steps.
-- Steps must be concrete and doable.
-- Total step minutes per day should be <= daily_minutes.
-- day_number must be sequential starting at 1.`
-
-	userInput := map[string]any{
-		"goal_title":    title,
-		"days":          days,
-		"daily_minutes": dailyMinutes,
-		"tone":          "clean, actionable, minimal",
-	}
-
-	reqBody := responsesReq{
-		Model:        c.Model,
-		Instructions: instructions,
-		Input: []any{
-			map[string]any{"role": "user", "content": userInput},
-		},
-		Text: textConfig{
-			Format: jsonSchemaFormat{
-				Type:   "json_schema",
-				Name:   "slice_plan",
-				Strict: true,
-				Schema: schema,
-			},
-		},
-	}
-
+func (c *Client) doResponses(ctx context.Context, reqBody responsesReq) (string, error) {
 	b, _ := json.Marshal(reqBody)
+
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/responses", bytes.NewReader(b))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, errors.New("openai http status not ok")
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("openai http %d: %s", resp.StatusCode, string(body))
 	}
 
 	var rr responsesResp
 	if err := json.NewDecoder(resp.Body).Decode(&rr); err != nil {
-		return nil, err
+		return "", err
 	}
 
-	// Extract the first output_text
+	// Extract first output_text
 	var jsonText string
 	for _, out := range rr.Output {
 		for _, c := range out.Content {
@@ -190,16 +143,95 @@ Rules:
 		}
 	}
 	if jsonText == "" {
-		return nil, errors.New("no output_text from openai")
+		return "", errors.New("no output_text from openai")
 	}
 
-	var parsed planSchemaResponse
-	if err := json.Unmarshal([]byte(jsonText), &parsed); err != nil {
-		return nil, err
-	}
-	if len(parsed.Days) != days {
-		return nil, errors.New("ai returned wrong number of days")
-	}
+	return jsonText, nil
+}
 
-	return parsed.Days, nil
+func splitterSchema(days int) map[string]any {
+	// NOTE: Strict schema matching your frontend/backend:
+	// - meta required
+	// - plan required
+	// - plan.items length == days
+	// - steps length == 3
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"meta": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"splitter_quote":      map[string]any{"type": "string"},
+					"mode":                map[string]any{"type": "string", "enum": []any{"normal", "de_scope"}},
+					"goal_type":           map[string]any{"type": "string", "enum": []any{"Learn", "Build", "Create", "Improve", "Organize", "Social"}},
+					"original_goal":       map[string]any{"type": "string"},
+					"final_goal":          map[string]any{"type": "string"},
+					"changed":             map[string]any{"type": "boolean"},
+					"why_this_adjustment": map[string]any{"type": "string"},
+					"success_rule":        map[string]any{"type": "string"},
+					"assumptions": map[string]any{
+						"type":     "array",
+						"minItems": 0,
+						"maxItems": 3,
+						"items":    map[string]any{"type": "string"},
+					},
+					"risk_notes": map[string]any{
+						"type":     "array",
+						"minItems": 1,
+						"maxItems": 3,
+						"items":    map[string]any{"type": "string"},
+					},
+				},
+				"required": []string{
+					"splitter_quote", "mode", "goal_type",
+					"original_goal", "final_goal", "changed",
+					"why_this_adjustment", "success_rule",
+					"assumptions", "risk_notes",
+				},
+				"additionalProperties": false,
+			},
+			"plan": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"title":         map[string]any{"type": "string"},
+					"days":          map[string]any{"type": "integer"},
+					"daily_minutes": map[string]any{"type": "integer"},
+					"items": map[string]any{
+						"type":     "array",
+						"minItems": days,
+						"maxItems": days,
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"day_number": map[string]any{"type": "integer"},
+								"focus":      map[string]any{"type": "string"},
+								"steps": map[string]any{
+									"type":     "array",
+									"minItems": 3,
+									"maxItems": 3,
+									"items": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"title":           map[string]any{"type": "string"},
+											"minutes":         map[string]any{"type": "integer"},
+											"deliverable":     map[string]any{"type": "string"},
+											"done_definition": map[string]any{"type": "string"},
+										},
+										"required":             []string{"title", "minutes", "deliverable", "done_definition"},
+										"additionalProperties": false,
+									},
+								},
+							},
+							"required":             []string{"day_number", "focus", "steps"},
+							"additionalProperties": false,
+						},
+					},
+				},
+				"required":             []string{"title", "days", "daily_minutes", "items"},
+				"additionalProperties": false,
+			},
+		},
+		"required":             []string{"meta", "plan"},
+		"additionalProperties": false,
+	}
 }
