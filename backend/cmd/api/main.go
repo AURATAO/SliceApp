@@ -5,26 +5,25 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/joho/godotenv"
+
 	"sliceapp-backend/internal/config"
 	"sliceapp-backend/internal/db"
 	"sliceapp-backend/internal/httpapi"
 )
 
 func main() {
+
+	_ = godotenv.Load()
 	cfg := config.Load()
 
-	// DB 暫時可不連（DATABASE_URL 空也能跑）
 	pool, err := db.Connect(cfg.DatabaseURL)
 	if err != nil {
-		log.Printf("DB not connected: %v", err)
+		log.Fatalf("DB connect failed: %v", err) // ✅ 直接停止，別讓 API 半死不活
 	}
-	defer func() {
-		if pool != nil {
-			pool.Close()
-		}
-	}()
+	defer pool.Close()
 
-	r := httpapi.NewRouter(pool)
+	r := httpapi.NewRouter(pool, cfg)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -32,6 +31,6 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("API listening on http://localhost:%s", cfg.Port)
+	log.Printf("API listening on http://0.0.0.0:%s", cfg.Port)
 	log.Fatal(srv.ListenAndServe())
 }

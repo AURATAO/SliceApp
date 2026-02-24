@@ -1,17 +1,17 @@
-import React, { useCallback, useMemo, useState, useEffect } from "react";
-import {
-  ActivityIndicator,
-  Text,
-  View,
-  TextInput,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-} from "react-native";
+import React, {
+  useCallback,
+  useMemo,
+  useState,
+  useEffect,
+  useRef,
+} from "react";
+import { Text, View, ScrollView, Pressable, Modal } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
-
+import {
+  getSelectedPlanId,
+  clearSelectedPlanId,
+} from "../storage/selectedPlan";
 import type { RootStackParamList } from "../../App";
 import { getPlan, listPlans, patchDayDone } from "../api";
 import type { PlanDay, PlanDetail, PlanListItem } from "../types";
@@ -22,7 +22,9 @@ import { BrutalButton } from "../ui/BrutalButton";
 import { VerticalLabel } from "../ui/VerticalLabel";
 import { patchDayContent } from "../api";
 import { StateCard } from "../ui/StateCard";
-import { EditablePlanDayCard } from "../ui/EditablePlanDayCard";
+import { pickCongratsText } from "../ui/quotes";
+import ConfettiCannon from "react-native-confetti-cannon";
+import { useRefresh } from "../RefreshContext";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Today">;
 
@@ -44,6 +46,14 @@ export default function TodayScreen({ navigation }: Props) {
   const [draftSteps, setDraftSteps] = useState<any[]>([]);
   const [openDoneIdx, setOpenDoneIdx] = useState<number | null>(null);
   const [openOps, setOpenOps] = useState(false);
+  const [showCongrats, setShowCongrats] = useState(false);
+  const [congratsText, setCongratsText] = useState<string>("");
+  const [congratsTitle, setCongratsTitle] = useState<string>("NICE CUT");
+  const [willCompletePlan, setWillCompletePlan] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const { refreshKey } = useRefresh();
+  const didLoadRef = useRef(false);
+  const { bump } = useRefresh();
 
   const todayDay: PlanDay | null = useMemo(() => {
     if (!plan) return null;
@@ -67,21 +77,50 @@ export default function TodayScreen({ navigation }: Props) {
     return Math.max(plan.days - doneDays, 0);
   }, [plan, doneDays]);
 
+  const isPlanCompleted = (p: PlanDetail) =>
+    p.items.filter((d) => d.is_done).length >= p.days;
+
   const load = async () => {
     try {
       setErr("");
       setLoading(true);
 
-      const plans = await listPlans();
-      const latest = pickLatestPlan(plans);
+      const sid = await getSelectedPlanId();
 
-      if (!latest) {
-        setPlan(null);
-        return;
+      // 1) Try selected plan first
+      if (sid) {
+        try {
+          const detail = await getPlan(sid);
+
+          // ✅ if selected plan is completed -> clear selection and fallback
+          if (!isPlanCompleted(detail)) {
+            setPlan(detail);
+            return;
+          }
+          await clearSelectedPlanId();
+        } catch {
+          await clearSelectedPlanId();
+        }
       }
 
-      const detail = await getPlan(latest.id);
-      setPlan(detail);
+      // 2) Fallback: find latest ACTIVE plan (not completed)
+      const list = await listPlans();
+
+      // try newest-first, find the first active one
+      for (const p of list) {
+        try {
+          const detail = await getPlan(p.id);
+          if (!isPlanCompleted(detail)) {
+            setPlan(detail);
+            return;
+          }
+        } catch {
+          // ignore and continue
+        }
+      }
+
+      // 3) No active plans found -> show empty state
+      setPlan(null);
     } catch (e: any) {
       setErr(e?.message ?? "unknown error");
     } finally {
@@ -91,8 +130,13 @@ export default function TodayScreen({ navigation }: Props) {
 
   useFocusEffect(
     useCallback(() => {
+      if (!didLoadRef.current) {
+        didLoadRef.current = true;
+        load();
+        return;
+      }
       load();
-    }, []),
+    }, [refreshKey]),
   );
 
   useEffect(() => {
@@ -108,8 +152,37 @@ export default function TodayScreen({ navigation }: Props) {
 
   const markDoneToday = async () => {
     if (!plan || !todayDay) return;
-    await patchDayDone(plan.id, todayDay.day_number, true);
-    await load();
+
+    try {
+      setErr("");
+
+      const doneDaysNow = plan.items.filter((d) => d.is_done).length;
+      const willComplete = doneDaysNow + 1 >= plan.days;
+      const remainingBefore = Math.max(plan.days - doneDaysNow, 0);
+
+      await patchDayDone(plan.id, todayDay.day_number, true);
+
+      bump();
+
+      // congrats text
+      const picked = pickCongratsText(remainingBefore, willComplete);
+      setCongratsTitle(willComplete ? "COMPLETED" : "DONE");
+      setCongratsText(picked.text);
+      setWillCompletePlan(willComplete);
+
+      // ✅ show effect first
+      if (willComplete) {
+        setShowConfetti(true);
+        setShowCongrats(true);
+        // setTimeout(() => setShowCongrats(true), 600);
+      } else {
+        setShowCongrats(true);
+      }
+
+      // ❌ do NOT load here
+    } catch (e: any) {
+      setErr(e?.message ?? "mark done failed");
+    }
   };
 
   const saveToday = async () => {
@@ -202,6 +275,26 @@ export default function TodayScreen({ navigation }: Props) {
   if (!todayDay) {
     return (
       <Screen>
+        {showConfetti ? (
+          <View
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 9999,
+            }}
+          >
+            <ConfettiCannon
+              count={120}
+              origin={{ x: 200, y: 0 }}
+              fadeOut
+              autoStart
+              onAnimationEnd={() => setShowConfetti(false)}
+            />
+          </View>
+        ) : null}
         <View className="relative mb-3">
           <Text className="text-charcoal text-[28px] font-bold tracking-[2px]">
             COMPLETED
@@ -416,6 +509,56 @@ export default function TodayScreen({ navigation }: Props) {
             />
           </View>
         ) : null}
+        <Modal visible={showCongrats} transparent animationType="fade">
+          <View className="flex-1 items-center justify-center bg-black/40 px-5">
+            <View className="w-full border-2 border-charcoal rounded-[16px] bg-paper p-4">
+              <Text className="text-charcoal text-[12px] tracking-[3px] font-bold">
+                {congratsTitle}
+              </Text>
+
+              <Text className="text-charcoal text-[22px] font-bold mt-2">
+                {congratsText}
+              </Text>
+
+              <Text className="text-charcoal opacity-70 mt-2">
+                {willCompletePlan
+                  ? `You finished “${plan?.title ?? ""}”.`
+                  : "Tomorrow auto-loads. Keep it moving."}
+              </Text>
+
+              <View className="mt-5 flex-row justify-between">
+                <Pressable
+                  onPress={async () => {
+                    setShowCongrats(false);
+                  }}
+                  hitSlop={10}
+                >
+                  <View className="border-2 border-charcoal rounded-[999px] px-4 py-2 bg-paper">
+                    <Text className="text-charcoal font-bold tracking-[2px]">
+                      OK
+                    </Text>
+                  </View>
+                </Pressable>
+
+                <Pressable
+                  onPress={async () => {
+                    setShowCongrats(false);
+
+                    if (plan?.id)
+                      navigation.navigate("Detail", { id: plan.id });
+                  }}
+                  hitSlop={10}
+                >
+                  <View className="border-2 border-charcoal rounded-[999px] px-4 py-2 bg-mustard">
+                    <Text className="text-charcoal font-bold tracking-[2px]">
+                      OPEN WEEK →
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </ScrollView>
     </Screen>
   );

@@ -1,5 +1,13 @@
 import React, { useState } from "react";
-import { Alert, Text, TextInput, View, Modal, Pressable } from "react-native";
+import {
+  Alert,
+  Text,
+  TextInput,
+  View,
+  Modal,
+  Pressable,
+  Keyboard,
+} from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { createPlan } from "../api";
 import type { SplitterMeta, PlanDetail } from "../types";
@@ -10,6 +18,15 @@ import { BrutalButton } from "../ui/BrutalButton";
 import { Marks } from "../ui/Marks";
 import { useSliceHeader } from "../ui/useSliceHeader";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
+import LoadingOverlay from "../ui/LoadingOverlay";
+import {
+  ensureNotifPermission,
+  scheduleDailyReminders,
+  scheduleDailyBless,
+  DEFAULT_REMINDER_TIMES,
+} from "../notifications";
+import { savePlanNotifState } from "../planNotifStorage";
+import { useRefresh } from "../RefreshContext";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Create">;
 
@@ -23,6 +40,7 @@ export default function CreatePlanScreen({ navigation }: Props) {
   const [meta, setMeta] = useState<SplitterMeta | null>(null);
   const [createdPlan, setCreatedPlan] = useState<PlanDetail | null>(null);
   const [show, setShow] = useState(false);
+  const { bump } = useRefresh();
 
   const onCreate = async () => {
     const d = Number(days);
@@ -41,16 +59,44 @@ export default function CreatePlanScreen({ navigation }: Props) {
         daily_minutes: m,
       });
 
-      // ✅ show meta modal first
+      // ✅ (A) Schedule Day 1 notifications RIGHT AFTER create success
+      const ok = await ensureNotifPermission();
+      if (ok) {
+        const dayIndex = 0;
+        const dayLabel = `Day ${dayIndex + 1}`;
+
+        // 你目前 PlanDay 可能沒有 title，MVP 先用 plan.title 也很合理
+        const taskLine =
+          (res.plan as any)?.items?.[dayIndex]?.steps?.[0]?.title ??
+          `Work on: ${res.plan.title}`;
+
+        const reminderIds = await scheduleDailyReminders({
+          title: `${dayLabel} — time to slice`,
+          body: taskLine,
+          times: [...DEFAULT_REMINDER_TIMES],
+        });
+
+        const blessId = await scheduleDailyBless({
+          title: `${dayLabel} — it’s okay`,
+          body: "Didn’t finish today? It’s fine. Tomorrow we continue — same day until it’s done.",
+        });
+
+        await savePlanNotifState(res.plan.id, {
+          currentDayIndex: dayIndex,
+          reminderIds,
+          blessId,
+        });
+      }
+
+      // ✅ show meta modal
       setMeta(res.meta);
       setCreatedPlan(res.plan);
       setShow(true);
-
-      // do NOT navigate here
-      // navigation.replace("Detail", { id: res.plan.id });
+      bump();
     } catch (e: any) {
       Alert.alert("Create failed", e.message ?? "unknown error");
     } finally {
+      Keyboard.dismiss();
       setLoading(false);
     }
   };
@@ -201,6 +247,7 @@ export default function CreatePlanScreen({ navigation }: Props) {
         </View>
         <View style={{ height: 40 }} />
       </KeyboardAwareScrollView>
+      <LoadingOverlay visible={loading} label="CUTTING YOUR PLAN…" />
     </Screen>
   );
 }

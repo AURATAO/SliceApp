@@ -16,6 +16,19 @@ import { Screen } from "../ui/Screen";
 import { CollageCard } from "../ui/CollageCard";
 import { useSliceHeader } from "../ui/useSliceHeader";
 import { EditablePlanDayCard } from "../ui/EditablePlanDayCard";
+import {
+  cancelNotifIds,
+  scheduleDailyReminders,
+  scheduleDailyBless,
+  DEFAULT_REMINDER_TIMES,
+  ensureNotifPermission,
+} from "../notifications";
+import {
+  loadPlanNotifState,
+  savePlanNotifState,
+  clearPlanNotifState,
+} from "../planNotifStorage";
+import { useRefresh } from "../RefreshContext";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Detail">;
 
@@ -31,6 +44,7 @@ export default function PlanDetailScreen({ route, navigation }: Props) {
     const next = items.find((d: any) => !d.is_done);
     return next ? next.day_number : null;
   }, [plan?.items]);
+  const { bump } = useRefresh();
 
   const load = async () => {
     try {
@@ -53,8 +67,59 @@ export default function PlanDetailScreen({ route, navigation }: Props) {
   );
 
   const toggleDay = async (day: PlanDay) => {
+    const nextDone = !day.is_done;
+
     try {
-      await patchDayDone(id, day.day_number, !day.is_done);
+      await patchDayDone(id, day.day_number, nextDone);
+      bump();
+
+      const fresh = await getPlan(id);
+
+      if (nextDone && day.day_number === todaySliceNumber) {
+        const ok = await ensureNotifPermission();
+        if (ok) {
+          const state = await loadPlanNotifState(id);
+
+          if (state) {
+            await cancelNotifIds([
+              ...state.reminderIds,
+              ...(state.blessId ? [state.blessId] : []),
+            ]);
+          }
+
+          const nextIndex = day.day_number; // 1-based -> next day 0-based index
+          const total = fresh.items.length;
+
+          if (nextIndex < total) {
+            const dayLabel = `Day ${nextIndex + 1}`;
+
+            const nextTaskLine =
+              (fresh.items as any)?.[nextIndex]?.title ??
+              (fresh.items as any)?.[nextIndex]?.content ??
+              `Work on: ${fresh.title}`;
+
+            const reminderIds = await scheduleDailyReminders({
+              title: `${dayLabel} — time to slice`,
+              body: nextTaskLine,
+              times: [...DEFAULT_REMINDER_TIMES],
+            });
+
+            const blessId = await scheduleDailyBless({
+              title: `${dayLabel} — it’s okay`,
+              body: "Didn’t finish today? It’s fine. Tomorrow we continue — same day until it’s done.",
+            });
+
+            await savePlanNotifState(id, {
+              currentDayIndex: nextIndex,
+              reminderIds,
+              blessId,
+            });
+          } else {
+            await clearPlanNotifState(id);
+          }
+        }
+      }
+
       await load();
     } catch (e: any) {
       Alert.alert("Update failed", e.message ?? "unknown error");

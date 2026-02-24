@@ -52,7 +52,7 @@ type CreatePlanResponse struct {
 	Items  []PlanDay `json:"items"`
 }
 
-func handleCreatePlan(db *pgxpool.Pool) http.HandlerFunc {
+func handleCreatePlan(db *pgxpool.Pool, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req CreatePlanRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -63,8 +63,6 @@ func handleCreatePlan(db *pgxpool.Pool) http.HandlerFunc {
 			http.Error(w, "invalid input", http.StatusBadRequest)
 			return
 		}
-
-		cfg := config.Load()
 
 		// Product rule: only plan next 7 days max (matches your AI rules)
 		planDays := req.Days

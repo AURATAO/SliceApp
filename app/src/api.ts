@@ -1,17 +1,63 @@
+// app/src/api.ts
 import { API_BASE } from "./config";
 import type { PlanDetail, PlanListItem, CreatePlanResponse } from "./types";
 
+/**
+ * fetchJSON: adds timeout + better error messages
+ */
+async function fetchJSON<T>(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 60000
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+
+    const contentType = res.headers.get("content-type") || "";
+    const isJSON = contentType.includes("application/json");
+
+    // Read body once (success or error) for clearer debugging
+    if (!res.ok) {
+      let body = "";
+      try {
+        body = isJSON ? JSON.stringify(await res.json()) : await res.text();
+      } catch {
+        body = "";
+      }
+      throw new Error(
+        `${options.method ?? "GET"} ${url} -> ${res.status}${body ? ` | ${body}` : ""}`,
+      );
+    }
+
+    // Successful response
+    if (isJSON) return (await res.json()) as T;
+    return (await res.text()) as unknown as T;
+  } catch (e: any) {
+    // Timeout / abort
+    if (e?.name === "AbortError") {
+      throw new Error(
+        `Request timeout (${timeoutMs}ms): ${options.method ?? "GET"} ${url}`,
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function listPlans(): Promise<PlanListItem[]> {
-  const res = await fetch(`${API_BASE}/plans`);
-  if (!res.ok) throw new Error(`listPlans failed: ${res.status}`);
-  const data = await res.json();
+  const data = await fetchJSON<{ plans?: PlanListItem[] }>(`${API_BASE}/plans`);
   return data.plans ?? [];
 }
 
 export async function getPlan(id: string): Promise<PlanDetail> {
-  const res = await fetch(`${API_BASE}/plans/${id}`);
-  if (!res.ok) throw new Error(`getPlan failed: ${res.status}`);
-  return await res.json();
+  return await fetchJSON<PlanDetail>(`${API_BASE}/plans/${id}`);
 }
 
 export async function createPlan(payload: {
@@ -19,57 +65,38 @@ export async function createPlan(payload: {
   days: number;
   daily_minutes: number;
 }): Promise<CreatePlanResponse> {
-  const res = await fetch(`${API_BASE}/plan`, {
+  return await fetchJSON<CreatePlanResponse>(`${API_BASE}/plan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "createPlan failed");
-  }
-
-  return await res.json();
 }
 
-export async function patchDayDone(planId: string, dayNumber: number, isDone: boolean) {
-  const res = await fetch(`${API_BASE}/plans/${planId}/days/${dayNumber}`, {
+export async function patchDayDone(
+  planId: string,
+  dayNumber: number,
+  isDone: boolean,
+) {
+  return await fetchJSON(`${API_BASE}/plans/${planId}/days/${dayNumber}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ is_done: isDone }),
   });
-  if (!res.ok) throw new Error(`patchDayDone failed: ${res.status}`);
-  return await res.json();
 }
-
 
 export async function patchDayContent(
   planId: string,
   dayNumber: number,
-  payload: { focus?: string; steps?: any[] }
+  payload: { focus?: string; steps?: any[] },
 ) {
-  const res = await fetch(`${API_BASE}/plans/${planId}/days/${dayNumber}`, {
+  return await fetchJSON(`${API_BASE}/plans/${planId}/days/${dayNumber}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "update failed");
-  }
-
-  return res.json();
 }
 
 export async function deletePlan(planId: string) {
-  const res = await fetch(`${API_BASE}/plans/${planId}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "delete failed");
-  }
+  await fetchJSON(`${API_BASE}/plans/${planId}`, { method: "DELETE" });
   return true;
 }
