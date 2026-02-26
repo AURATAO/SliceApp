@@ -25,6 +25,7 @@ import { StateCard } from "../ui/StateCard";
 import { pickCongratsText } from "../ui/quotes";
 import ConfettiCannon from "react-native-confetti-cannon";
 import { useRefresh } from "../RefreshContext";
+import { onSelectAsToday } from "../planNotifications";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Today">;
 
@@ -85,6 +86,9 @@ export default function TodayScreen({ navigation }: Props) {
       setErr("");
       setLoading(true);
 
+      const isPlanCompleted = (p: PlanDetail) =>
+        p.items.filter((d) => d.is_done).length >= p.days;
+
       const sid = await getSelectedPlanId();
 
       // 1) Try selected plan first
@@ -92,34 +96,51 @@ export default function TodayScreen({ navigation }: Props) {
         try {
           const detail = await getPlan(sid);
 
-          // ✅ if selected plan is completed -> clear selection and fallback
           if (!isPlanCompleted(detail)) {
+            // ✅ selected plan still active → show it (no need to reschedule)
             setPlan(detail);
             return;
           }
+
+          // selected plan completed → clear selection and fallback
           await clearSelectedPlanId();
         } catch {
+          // selected plan id invalid → clear and fallback
           await clearSelectedPlanId();
         }
       }
 
-      // 2) Fallback: find latest ACTIVE plan (not completed)
+      // 2) Fallback: pick newest ACTIVE plan (not completed)
       const list = await listPlans();
 
-      // try newest-first, find the first active one
-      for (const p of list) {
+      // ensure newest-first
+      const sorted = [...list].sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+
+      const currentSid = await getSelectedPlanId(); // should be null now, but safe
+
+      for (const p of sorted) {
         try {
           const detail = await getPlan(p.id);
-          if (!isPlanCompleted(detail)) {
-            setPlan(detail);
-            return;
+
+          // skip completed
+          if (isPlanCompleted(detail)) continue;
+
+          // ✅ make it the active(today) plan + keep only ONE notification set
+          if (currentSid !== detail.id) {
+            await onSelectAsToday(detail.id);
           }
+
+          setPlan(detail);
+          return;
         } catch {
           // ignore and continue
         }
       }
 
-      // 3) No active plans found -> show empty state
+      // 3) No active plans found
       setPlan(null);
     } catch (e: any) {
       setErr(e?.message ?? "unknown error");
