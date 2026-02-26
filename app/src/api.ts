@@ -1,6 +1,8 @@
 // app/src/api.ts
 import { API_BASE } from "./config";
 import type { PlanDetail, PlanListItem, CreatePlanResponse } from "./types";
+import { getOrCreateUserId } from "./storage/userId"; 
+
 
 /**
  * fetchJSON: adds timeout + better error messages
@@ -14,8 +16,16 @@ async function fetchJSON<T>(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    // ✅ inject X-User-Id for ALL requests to your API
+    const userId = await getOrCreateUserId(API_BASE);
+
+    const mergedHeaders: Record<string, string> = {
+      ...(options.headers as Record<string, string> | undefined),
+      "X-User-Id": userId,
+    };
     const res = await fetch(url, {
       ...options,
+       headers: mergedHeaders,
       signal: controller.signal,
     });
 
