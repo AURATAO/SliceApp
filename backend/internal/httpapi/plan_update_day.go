@@ -3,18 +3,21 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type UpdatePlanDayRequest struct {
-	Focus  *string          `json:"focus,omitempty"`
-	Steps  json.RawMessage  `json:"steps,omitempty"`   // expecting JSON array
-	IsDone *bool            `json:"is_done,omitempty"`
+	Focus  *string         `json:"focus,omitempty"`
+	Steps  json.RawMessage `json:"steps,omitempty"` // expecting JSON array
+	IsDone *bool           `json:"is_done,omitempty"`
 }
 
 func handleUpdatePlanDay(db *pgxpool.Pool) http.HandlerFunc {
@@ -52,6 +55,12 @@ func handleUpdatePlanDay(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 
+		uid, ok := userIDFromCtx(r.Context())
+		if !ok {
+			http.Error(w, "missing user", http.StatusUnauthorized)
+			return
+		}
+
 		// Validate steps JSON if provided (must be array)
 		if req.Steps != nil {
 			var tmp []any
@@ -72,37 +81,73 @@ func handleUpdatePlanDay(db *pgxpool.Pool) http.HandlerFunc {
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 
-		if req.Focus != nil {
-			_, err = tx.Exec(ctx, `
-				update public.plan_days
-				set focus = $1
-				where plan_id = $2 and day_number = $3
-			`, *req.Focus, planID, dayNumber)
+		// helper: run update with owner check and require at least 1 row
+		run := func(sql string, args ...any) error {
+			tag, err := tx.Exec(ctx, sql, args...)
 			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() == 0 {
+				return pgx.ErrNoRows
+			}
+			return nil
+		}
+
+		if req.Focus != nil {
+			err = run(`
+		update public.plan_days d
+		set focus = $1
+		where d.plan_id = $2 and d.day_number = $3
+		  and exists (
+			select 1 from public.plans p
+			where p.id = d.plan_id and p.user_id = $4
+		  )
+	`, *req.Focus, planID, dayNumber, uid)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
 				http.Error(w, "update focus failed", http.StatusInternalServerError)
 				return
 			}
 		}
 
 		if req.Steps != nil {
-			_, err = tx.Exec(ctx, `
-				update public.plan_days
-				set steps = $1
-				where plan_id = $2 and day_number = $3
-			`, req.Steps, planID, dayNumber)
+			err = run(`
+		update public.plan_days d
+		set steps = $1
+		where d.plan_id = $2 and d.day_number = $3
+		  and exists (
+			select 1 from public.plans p
+			where p.id = d.plan_id and p.user_id = $4
+		  )
+	`, req.Steps, planID, dayNumber, uid)
 			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
 				http.Error(w, "update steps failed", http.StatusInternalServerError)
 				return
 			}
 		}
 
 		if req.IsDone != nil {
-			_, err = tx.Exec(ctx, `
-				update public.plan_days
-				set is_done = $1
-				where plan_id = $2 and day_number = $3
-			`, *req.IsDone, planID, dayNumber)
+			err = run(`
+		update public.plan_days d
+		set is_done = $1
+		where d.plan_id = $2 and d.day_number = $3
+		  and exists (
+			select 1 from public.plans p
+			where p.id = d.plan_id and p.user_id = $4
+		  )
+	`, *req.IsDone, planID, dayNumber, uid)
 			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
 				http.Error(w, "update is_done failed", http.StatusInternalServerError)
 				return
 			}

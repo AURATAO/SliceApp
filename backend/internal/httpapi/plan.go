@@ -219,24 +219,49 @@ func handleCreatePlan(db *pgxpool.Pool, cfg config.Config) http.HandlerFunc {
 		planID := ""
 		createdAt := time.Time{}
 
+		uid, ok := userIDFromCtx(r.Context())
+		if !ok {
+			http.Error(w, "missing user", http.StatusUnauthorized)
+			return
+		}
+
 		if db != nil {
 			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			defer cancel()
 
-			// IMPORTANT: store final title (plan.Title), not req.Title
-			err := db.QueryRow(ctx,
-				`insert into public.plans (title, days, daily_minutes) values ($1,$2,$3) returning id, created_at`,
-				plan.Title, plan.Days, plan.DailyMinutes,
-			).Scan(&planID, &createdAt)
+			tx, err := db.Begin(ctx)
+			if err != nil {
+				http.Error(w, "begin tx failed", http.StatusInternalServerError)
+				return
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
 
-			if err == nil {
-				for _, d := range plan.Items {
-					stepsJSON, _ := json.Marshal(d.Steps)
-					_, _ = db.Exec(ctx,
-						`insert into public.plan_days (plan_id, day_number, focus, steps) values ($1,$2,$3,$4)`,
-						planID, d.DayNumber, d.Focus, stepsJSON,
-					)
+			// IMPORTANT: store final title (plan.Title), not req.Title
+			err = tx.QueryRow(ctx, `
+    insert into public.plans (user_id, title, days, daily_minutes)
+    values ($1, $2, $3, $4)
+    returning id, created_at
+  `, uid, plan.Title, plan.Days, plan.DailyMinutes).Scan(&planID, &createdAt)
+			if err != nil {
+				http.Error(w, "insert plan failed", http.StatusInternalServerError)
+				return
+			}
+
+			for _, d := range plan.Items {
+				stepsJSON, _ := json.Marshal(d.Steps)
+				_, err = tx.Exec(ctx, `
+      insert into public.plan_days (plan_id, day_number, focus, steps)
+      values ($1,$2,$3,$4)
+    `, planID, d.DayNumber, d.Focus, stepsJSON)
+				if err != nil {
+					http.Error(w, "insert plan_days failed", http.StatusInternalServerError)
+					return
 				}
+			}
+
+			if err := tx.Commit(ctx); err != nil {
+				http.Error(w, "commit failed", http.StatusInternalServerError)
+				return
 			}
 		}
 

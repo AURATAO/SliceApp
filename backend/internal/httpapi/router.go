@@ -16,6 +16,8 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config) http.Handler {
 		w.Write([]byte("ok"))
 	})
 
+	r.Post("/auth/anonymous", handleAnonymousUser(db))
+
 	r.Get("/plans", handleListPlans(db))
 	r.Get("/plans/{id}", handleGetPlan(db))
 	r.Post("/plan", handleCreatePlan(db, cfg))

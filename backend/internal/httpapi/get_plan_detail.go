@@ -25,6 +25,11 @@ func handleGetPlan(db *pgxpool.Pool) http.HandlerFunc {
 			http.Error(w, "db not connected", http.StatusServiceUnavailable)
 			return
 		}
+		uid, ok := userIDFromCtx(r.Context())
+		if !ok {
+			http.Error(w, "missing user", http.StatusUnauthorized)
+			return
+		}
 
 		planID := chi.URLParam(r, "id")
 		if planID == "" {
@@ -39,8 +44,8 @@ func handleGetPlan(db *pgxpool.Pool) http.HandlerFunc {
 		err := db.QueryRow(ctx, `
 			select id, title, days, daily_minutes, created_at
 			from public.plans
-			where id = $1
-		`, planID).Scan(&resp.ID, &resp.Title, &resp.Days, &resp.DailyMinutes, &resp.CreatedAt)
+			  where id = $1 and user_id = $2
+		`, planID, uid).Scan(&resp.ID, &resp.Title, &resp.Days, &resp.DailyMinutes, &resp.CreatedAt)
 
 		if err != nil {
 			http.Error(w, "plan not found", http.StatusNotFound)
@@ -50,9 +55,9 @@ func handleGetPlan(db *pgxpool.Pool) http.HandlerFunc {
 		rows, err := db.Query(ctx, `
 			select day_number, focus, steps, is_done
 			from public.plan_days
-			where plan_id = $1
+			where d.plan_id = $1 and p.user_id = $2
 			order by day_number asc
-		`, planID)
+		`, planID, uid)
 		if err != nil {
 			http.Error(w, "query plan_days failed", http.StatusInternalServerError)
 			return

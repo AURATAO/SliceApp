@@ -24,15 +24,22 @@ func handleListPlans(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		uid, ok := userIDFromCtx(r.Context())
+		if !ok {
+			http.Error(w, "missing user", http.StatusUnauthorized)
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
 
 		rows, err := db.Query(ctx, `
 			select id, title, days, daily_minutes, created_at
 			from public.plans
+			where user_id = $1
 			order by created_at desc
 			limit 50
-		`)
+		`, uid)
 		if err != nil {
 			http.Error(w, "query failed", http.StatusInternalServerError)
 			return

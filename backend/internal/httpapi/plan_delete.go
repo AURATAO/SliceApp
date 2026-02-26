@@ -17,6 +17,11 @@ func handleDeletePlan(db *pgxpool.Pool) http.HandlerFunc {
 			http.Error(w, "db not connected", http.StatusServiceUnavailable)
 			return
 		}
+		uid, ok := userIDFromCtx(r.Context())
+		if !ok {
+			http.Error(w, "missing user", http.StatusUnauthorized)
+			return
+		}
 
 		planID := chi.URLParam(r, "id")
 		if planID == "" {
@@ -31,8 +36,8 @@ func handleDeletePlan(db *pgxpool.Pool) http.HandlerFunc {
 		// deleting from plans will automatically delete plan_days.
 		tag, err := db.Exec(ctx, `
 			delete from public.plans
-			where id = $1
-		`, planID)
+			 where id = $1 and user_id = $2
+		`, planID, uid)
 
 		if err != nil {
 			http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
