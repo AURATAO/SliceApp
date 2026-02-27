@@ -236,6 +236,17 @@ func handleCreatePlan(db *pgxpool.Pool, cfg config.Config) http.HandlerFunc {
 			}
 			defer func() { _ = tx.Rollback(ctx) }()
 
+			// 0) Ensure user exists (for FK plans.user_id -> users.id)
+			_, err = tx.Exec(ctx, `
+			insert into public.users (id)
+			values ($1)
+			on conflict (id) do nothing
+			`, uid)
+			if err != nil {
+				http.Error(w, "ensure user failed", http.StatusInternalServerError)
+				return
+			}
+
 			// IMPORTANT: store final title (plan.Title), not req.Title
 			err = tx.QueryRow(ctx, `
     insert into public.plans (user_id, title, days, daily_minutes)

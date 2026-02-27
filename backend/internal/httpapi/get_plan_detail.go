@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -53,12 +54,14 @@ func handleGetPlan(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(ctx, `
-			select day_number, focus, steps, is_done
-			from public.plan_days
-			where d.plan_id = $1 and p.user_id = $2
-			order by day_number asc
+		select d.day_number, d.focus, d.steps, d.is_done
+		from public.plan_days d
+		join public.plans p on p.id = d.plan_id
+		where d.plan_id = $1 and p.user_id = $2
+		order by d.day_number asc
 		`, planID, uid)
 		if err != nil {
+			log.Printf("query plan_days failed: %v", err)
 			http.Error(w, "query plan_days failed", http.StatusInternalServerError)
 			return
 		}

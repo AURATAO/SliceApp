@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -45,11 +44,6 @@ func handleDeletePlan(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if tag.RowsAffected() == 0 {
-			// If plan doesn't exist, treat as 404
-			if err == pgx.ErrNoRows {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}

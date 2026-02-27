@@ -55,12 +55,13 @@ func handlePatchPlanDay(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		cmd, err := db.Exec(ctx, `
-			update public.plan_days
-			set is_done = $1
-			where plan_id = $2 and day_number = $3 nd exists (
-      select 1 from public.plans p
-      where p.id = d.plan_id and p.user_id = $4
-    )
+		update public.plan_days d
+		set is_done = $1
+		where d.plan_id = $2 and d.day_number = $3
+			and exists (
+			select 1 from public.plans p
+			where p.id = d.plan_id and p.user_id = $4
+			)
 		`, *req.IsDone, planID, dayNumber, uid)
 		if err != nil {
 			http.Error(w, "update failed", http.StatusInternalServerError)
