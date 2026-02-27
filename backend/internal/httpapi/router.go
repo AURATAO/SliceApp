@@ -15,6 +15,10 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+	r.Get("/_version", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("v-debug-logs-1"))
+	})
 
 	// No user required
 	r.Post("/auth/anonymous", handleAnonymousUser(db))
