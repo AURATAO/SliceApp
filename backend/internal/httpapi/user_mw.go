@@ -2,17 +2,18 @@ package httpapi
 
 import (
 	"context"
+	"log"
 	"net/http"
 
 	"github.com/google/uuid"
 )
 
-type ctxKey string
+type ctxKey int
 
-const ctxUserIDKey ctxKey = "user_id"
+const userIDKey ctxKey = iota
 
 func userIDFromCtx(ctx context.Context) (uuid.UUID, bool) {
-	v := ctx.Value(ctxUserIDKey)
+	v := ctx.Value(userIDKey)
 	id, ok := v.(uuid.UUID)
 	return id, ok
 }
@@ -29,7 +30,10 @@ func requireUserID(next http.Handler) http.Handler {
 			http.Error(w, "invalid X-User-Id", http.StatusBadRequest)
 			return
 		}
-		ctx := context.WithValue(r.Context(), ctxUserIDKey, id)
+
+		log.Printf("X-User-Id received: %q", raw)
+
+		ctx := context.WithValue(r.Context(), userIDKey, id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

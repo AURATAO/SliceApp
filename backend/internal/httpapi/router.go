@@ -16,15 +16,21 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config) http.Handler {
 		w.Write([]byte("ok"))
 	})
 
+	// No user required
 	r.Post("/auth/anonymous", handleAnonymousUser(db))
 
-	r.Get("/plans", handleListPlans(db))
-	r.Get("/plans/{id}", handleGetPlan(db))
-	r.Post("/plan", handleCreatePlan(db, cfg))
+	// User required
+	r.Group(func(pr chi.Router) {
+		pr.Use(requireUserID)
 
-	r.Patch("/plans/{id}/days/{day}", handlePatchPlanDay(db))
-	r.Patch("/plans/{id}/days/{dayNumber}", handleUpdatePlanDay(db))
-	r.Delete("/plans/{id}", handleDeletePlan(db))
+		pr.Get("/plans", handleListPlans(db))
+		pr.Get("/plans/{id}", handleGetPlan(db))
+		pr.Post("/plan", handleCreatePlan(db, cfg))
+
+		pr.Patch("/plans/{id}/days/{day}", handlePatchPlanDay(db))
+		pr.Patch("/plans/{id}/days/{dayNumber}", handleUpdatePlanDay(db))
+		pr.Delete("/plans/{id}", handleDeletePlan(db))
+	})
 
 	return r
 }

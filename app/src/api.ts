@@ -19,16 +19,16 @@ async function fetchJSON<T>(
     // ✅ inject X-User-Id for ALL requests to your API
     const userId = await getOrCreateUserId(API_BASE);
 
-    const mergedHeaders: Record<string, string> = {
-      ...(options.headers as Record<string, string> | undefined),
-      "X-User-Id": userId,
-    };
+    const headers = new Headers(options.headers ?? {});
+    headers.set("X-User-Id", userId);
+
+    console.log("userId", userId);
+    console.log("headers", Array.from(headers.entries()));
     const res = await fetch(url, {
       ...options,
-       headers: mergedHeaders,
+      headers,
       signal: controller.signal,
     });
-
     const contentType = res.headers.get("content-type") || "";
     const isJSON = contentType.includes("application/json");
 
@@ -48,6 +48,7 @@ async function fetchJSON<T>(
     // Successful response
     if (isJSON) return (await res.json()) as T;
     return (await res.text()) as unknown as T;
+  
   } catch (e: any) {
     // Timeout / abort
     if (e?.name === "AbortError") {
